@@ -28,7 +28,7 @@ class Args:
     """if toggled, cuda will be enabled by default"""
     track: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "model-based-value-expansion"
+    wandb_project_name: str = "parameter-space-noise"
     """the wandb's project name"""
     wandb_entity: str = "noahfarr"
     """the entity (team) of wandb's project"""
@@ -43,7 +43,7 @@ class Args:
 
     # Algorithm specific arguments
     env_id: str = "Hopper-v4"
-    """the environment id of the Atari game"""
+    """the environment id of the task"""
     total_timesteps: int = 1_000_000
     """total timesteps of the experiments"""
     actor_learning_rate: float = 3e-4
@@ -55,7 +55,7 @@ class Args:
     gamma: float = 0.99
     """the discount factor gamma"""
     tau: float = 0.005
-    """target smoothing coefficient (default: 0.005)"""
+    """target smoothing coefficient"""
     batch_size: int = 256
     """the batch size of sample from the reply memory"""
     learning_starts: float = 25e3
@@ -72,8 +72,9 @@ def make_env(env_id, seed, idx, capture_video, run_name):
             env = gym.make(env_id, render_mode="rgb_array")
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         else:
-            env = gym.make(env_id)
+            env = gym.make(env_id, exclude_current_positions_from_observation=False)
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = gym.wrappers.NormalizeObservation(env)
         env.action_space.seed(seed)
         return env
 
@@ -94,7 +95,7 @@ class QNetwork(nn.Module):
         self.ln2 = nn.LayerNorm(256)
         self.fc3 = nn.Linear(256, 1)
 
-    def forward(self, x, a, train=False):
+    def forward(self, x, a, train):
         if train:
             self.train()
         else:
@@ -130,7 +131,7 @@ class Actor(nn.Module):
             ),
         )
 
-    def forward(self, x, train=False):
+    def forward(self, x, train):
         if train:
             self.train()
         else:
@@ -200,19 +201,11 @@ poetry run pip install "stable_baselines3==2.0.0a1"
     q_optimizer = optim.Adam(list(qf1.parameters()), lr=args.critic_learning_rate)
     actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.actor_learning_rate)
 
-    param_noise = AdaptiveParamNoiseSpec()
+    param_noise = AdaptiveParamNoiseSpec(0.2, 0.2)
 
     envs.single_observation_space.dtype = np.float32
     rb = ReplayBuffer(
         args.buffer_size,
-        envs.single_observation_space,
-        envs.single_action_space,
-        device,
-        handle_timeout_termination=False,
-    )
-
-    eb = ReplayBuffer(
-        args.adaptation_frequency,
         envs.single_observation_space,
         envs.single_action_space,
         device,
@@ -269,9 +262,6 @@ poetry run pip install "stable_baselines3==2.0.0a1"
 
         rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
 
-        if global_step > args.learning_starts:
-            eb.add(obs, real_next_obs, actions, rewards, terminations, infos)
-
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
 
@@ -318,7 +308,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                     )
 
             if global_step % args.adaptation_frequency == 0:
-                data = eb.sample(args.adaptation_frequency)
+                data = rb.sample(args.batch_size)
                 adaptation_actor.load_state_dict(actor.state_dict())
                 perturb_model(adaptation_actor, param_noise)
                 with torch.no_grad():
@@ -331,7 +321,6 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                     adaptation_actions.cpu().numpy(),
                 )
                 param_noise.adapt(distance)
-                eb.reset()
 
             if global_step % 100 == 0:
                 writer.add_scalar(
@@ -340,6 +329,11 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                 writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                 writer.add_scalar("losses/distance", distance.item(), global_step)
+                writer.add_scalar(
+                    "losses/current_stddev",
+                    param_noise.current_stddev,
+                    global_step,
+                )
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar(
                     "charts/SPS",
