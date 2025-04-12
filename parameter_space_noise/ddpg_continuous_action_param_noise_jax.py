@@ -33,7 +33,7 @@ class Args:
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "parameter-space-noise"
     """the wandb's project name"""
-    wandb_entity: str = "noahfarr"
+    wandb_entity: str = None
     """the entity (team) of wandb's project"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
