@@ -32,6 +32,13 @@ def perturb_actor(key, actor_state, noise_state: NoiseState):
         sampler=lambda key, shape, dtype: noise_state.param_std
         * jax.random.normal(key, shape, dtype),
     )
+
+    noise = optax.tree_utils.tree_set(
+        noise,
+        lambda path, _: any("LayerNorm" in key.key for key in path),
+        bias=jnp.zeros(64),
+        scale=jnp.zeros(64),
+    )
     perturbed_actor_params = jax.tree_util.tree_map(
         lambda x, y: x + y, actor_state.params, noise
     )

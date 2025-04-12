@@ -149,8 +149,8 @@ poetry run pip install "stable_baselines3==2.0.0a1"
     random.seed(args.seed)
     np.random.seed(args.seed)
     key = jax.random.PRNGKey(args.seed)
-    key, actor_key, perturbed_actor_key, adaptation_actor_key, noise_key, qf1_key = (
-        jax.random.split(key, 6)
+    key, actor_key, perturbed_actor_key, adaptation_actor_key, qf1_key = (
+        jax.random.split(key, 5)
     )
 
     # env setup
